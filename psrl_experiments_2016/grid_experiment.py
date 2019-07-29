@@ -21,10 +21,12 @@ if __name__ == '__main__':
     '''
     Run a tabular experiment according to command line arguments
     '''
-
     # Take in command line flags
     parser = argparse.ArgumentParser(description='Run tabular RL experiment')
-    parser.add_argument('chainLen', help='length of chain', type=int)
+    parser.add_argument('gridSize', help='size of grid', type=int)
+    parser.add_argument('epLen', help='episode length', type=int)
+    parser.add_argument('rewardVar', help='reward variance', type=float)
+    parser.add_argument('pNoise', help='size of grid', type=float)
     parser.add_argument('alg', help='Agent constructor', type=str)
     parser.add_argument('scaling', help='scaling', type=float)
     parser.add_argument('seed', help='random seed', type=int)
@@ -32,8 +34,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Make a filename to identify flags
-    fileName = ('stochasticChain'
-                + '_len=' + '%03.f' % args.chainLen
+    fileName = ('stochasticGrid'
+                + '_size=' + '%03.f' % args.gridSize
+                + '_epLen=' + '%03.f' % args.epLen
+                + '_rewardVar=' + '%03.2f' % args.rewardVar
+                + '_pNoise=' + '%.3f' % args.pNoise
                 + '_alg=' + str(args.alg)
                 + '_scal=' + '%03.2f' % args.scaling
                 + '_seed=' + str(args.seed)
@@ -46,7 +51,7 @@ if __name__ == '__main__':
     print('******************************************************************')
 
     # Make the environment
-    env = environment.make_stochasticChain(args.chainLen)
+    env = environment.make_stochasticGrid(args.gridSize,args.epLen,args.pNoise,args.rewardVar)
 
     # Make the feature extractor
     f_ext = FeatureTrueState(env.epLen, env.nState, env.nAction, env.nState)
@@ -60,7 +65,6 @@ if __name__ == '__main__':
                 'BEB': finite_tabular_agents.BEB,
                 'BOLT': finite_tabular_agents.BOLT,
                 'UCRL2': finite_tabular_agents.UCRL2,
-                'UCRL2_GP': finite_tabular_agents.UCRL2_GP,
                 'UCFH': finite_tabular_agents.UCFH,
                 'EpsilonGreedy': finite_tabular_agents.EpsilonGreedy}
 

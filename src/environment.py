@@ -161,8 +161,8 @@ def make_riverSwim(epLen=20, nState=6):
     R_true = {}
     P_true = {}
 
-    for s in xrange(nState):
-        for a in xrange(nAction):
+    for s in range(nState):
+        for a in range(nAction):
             R_true[s, a] = (0, 0)
             P_true[s, a] = np.zeros(nState)
 
@@ -171,10 +171,10 @@ def make_riverSwim(epLen=20, nState=6):
     R_true[nState - 1, 1] = (1, 0)
 
     # Transitions
-    for s in xrange(nState):
+    for s in range(nState):
         P_true[s, 0][max(0, s-1)] = 1.
 
-    for s in xrange(1, nState - 1):
+    for s in range(1, nState - 1):
         P_true[s, 1][min(nState - 1, s + 1)] = 0.35
         P_true[s, 1][s] = 0.6
         P_true[s, 1][max(0, s-1)] = 0.05
@@ -207,8 +207,8 @@ def make_deterministicChain(nState, epLen):
     R_true = {}
     P_true = {}
 
-    for s in xrange(nState):
-        for a in xrange(nAction):
+    for s in range(nState):
+        for a in range(nAction):
             R_true[s, a] = (0, 0)
             P_true[s, a] = np.zeros(nState)
 
@@ -217,7 +217,7 @@ def make_deterministicChain(nState, epLen):
     R_true[nState - 1, 1] = (1, 1)
 
     # Transitions
-    for s in xrange(nState):
+    for s in range(nState):
         P_true[s, 0][max(0, s-1)] = 1.
         P_true[s, 1][min(nState - 1, s + 1)] = 1.
 
@@ -246,8 +246,8 @@ def make_stochasticChain(chainLen):
     R_true = {}
     P_true = {}
 
-    for s in xrange(nState):
-        for a in xrange(nAction):
+    for s in range(nState):
+        for a in range(nAction):
             R_true[s, a] = (0, 0)
             P_true[s, a] = np.zeros(nState)
 
@@ -256,7 +256,7 @@ def make_stochasticChain(chainLen):
     R_true[nState - 1, 1] = (1, 1)
 
     # Transitions
-    for s in xrange(nState):
+    for s in range(nState):
         P_true[s, 0][max(0, s-1)] = 1.
 
         P_true[s, 1][min(nState - 1, s + 1)] = 1. - pNoise
@@ -269,6 +269,63 @@ def make_stochasticChain(chainLen):
 
     return stochasticChain
 
+
+def make_stochasticGrid(gridSize,epLen,pNoise,rewardVar):
+    '''
+    Creates a difficult stochastic grid MDP with four actions.
+
+    Args:
+        gridSize - int - the size of the grid (total gridSize x gridSize +1 states - the last state is a terminal state)
+        epLen - int - episode length
+        pNoise - double - The probability to move randomly instead to the desired location. In [0,1]
+        rewardVar - double - The variance of the noise all across the state space
+
+    Returns:
+        gridMDP - Tabular MDP environment
+    '''
+    nState = gridSize*gridSize+1
+    epLen = epLen
+    nAction = 4
+
+    R_true = {}
+    P_true = {}
+
+    for s in range(nState):
+        for a in range(nAction):
+            R_true[s, a] = (0, rewardVar)
+            P_true[s, a] = np.zeros(nState)
+
+    # Rewards
+    for action in range(nAction):
+        R_true[nState - 2, action] = (1, rewardVar) # Reward's location
+        R_true[nState - 1, action] = (0, 0) # Terminal state
+
+    # Transitions
+    for s in range(nState):
+        nextState = [None]*4
+        if s >= nState-2: # moving to the terminal state
+            for action in range(nAction):
+                nextState[action] = nState-1
+        else:
+            nextState[0] = s-1 if s%gridSize>0 else s #'up'
+            nextState[1] = s+1 if (s+1)%gridSize>0 else s  # 'down'
+            nextState[2] = s - gridSize if s >= gridSize else s  # 'west'
+            nextState[3] = s + gridSize if s+gridSize <= nState-1 else s  # 'east'
+
+        for action in range(nAction):
+            for ns in nextState:
+                P_true[s, action][ns] += pNoise/4
+            P_true[s, action][nextState[action]] += 1-pNoise
+
+
+    stochasticGrid = TabularMDP(nState, nAction, epLen)
+    stochasticGrid.R = R_true
+    stochasticGrid.P = P_true
+    stochasticGrid.reset()
+
+    return stochasticGrid
+
+
 def make_bootDQNChain(nState=6, epLen=15, nAction=2):
     '''
     Creates the chain from Bootstrapped DQN
@@ -279,8 +336,8 @@ def make_bootDQNChain(nState=6, epLen=15, nAction=2):
     R_true = {}
     P_true = {}
 
-    for s in xrange(nState):
-        for a in xrange(nAction):
+    for s in range(nState):
+        for a in range(nAction):
             R_true[s, a] = (0, 0)
             P_true[s, a] = np.zeros(nState)
 
@@ -289,7 +346,7 @@ def make_bootDQNChain(nState=6, epLen=15, nAction=2):
     R_true[nState - 1, 1] = (1, 1)
 
     # Transitions
-    for s in xrange(nState):
+    for s in range(nState):
         P_true[s, 0][max(0, s-1)] = 1.
 
         P_true[s, 1][min(nState - 1, s + 1)] = 0.5
@@ -320,7 +377,7 @@ def make_hardBanditMDP(epLen, gap=0.01, nAction=2, pSuccess=0.5):
     R_true = {}
     P_true = {}
 
-    for a in xrange(nAction):
+    for a in range(nAction):
         # Rewards are independent of action
         R_true[0, a] = (0.5, 1)
         R_true[1, a] = (1, 0)

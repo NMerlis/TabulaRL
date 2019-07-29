@@ -6,7 +6,7 @@ author: iosband@stanford.edu
 '''
 
 import numpy as np
-from environment import TabularMDP
+from src.environment import TabularMDP
 
 #-------------------------------------------------------------------------------
 class FeatureExtract(object):

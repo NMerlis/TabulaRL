@@ -35,7 +35,7 @@ def run_finite_tabular_experiment(agent, env, f_ext, nEps, seed=1,
     cumReward = 0
     empRegret = 0
 
-    for ep in xrange(1, nEps + 2):
+    for ep in range(1, nEps + 2):
         # Reset the environment
         env.reset()
         epMaxVal = qMax[env.timestep][env.state]
@@ -73,19 +73,19 @@ def run_finite_tabular_experiment(agent, env, f_ext, nEps, seed=1,
         # Logging to dataframe
         if ep % recFreq == 0:
             data.append([ep, epReward, cumReward, cumRegret, empRegret])
-            print 'episode:', ep, 'epReward:', epReward, 'cumRegret:', cumRegret
+            print('episode:', ep, 'epReward:', epReward, 'cumRegret:', cumRegret)
 
         if ep % max(fileFreq, recFreq) == 0:
             dt = pd.DataFrame(data,
                               columns=['episode', 'epReward', 'cumReward',
                                        'cumRegret', 'empRegret'])
-            print 'Writing to file ' + targetPath
+            print('Writing to file ' + targetPath)
             dt.to_csv('tmp.csv', index=False, float_format='%.2f')
             copyfile('tmp.csv', targetPath)
-            print '****************************'
+            print('****************************')
 
-    print '**************************************************'
-    print 'Experiment complete'
-    print '**************************************************'
+    print('**************************************************')
+    print('Experiment complete')
+    print('**************************************************')
 
 

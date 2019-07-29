@@ -17,7 +17,8 @@ author: iosband@stanford.edu
 '''
 
 import numpy as np
-from agent import *
+from src.agent import *
+import copy
 
 class FiniteHorizonTabularAgent(FiniteHorizonAgent):
     '''
@@ -65,8 +66,8 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
         self.R_prior = {}
         self.P_prior = {}
 
-        for state in xrange(nState):
-            for action in xrange(nAction):
+        for state in range(nState):
+            for action in range(nAction):
                 self.R_prior[state, action] = (self.mu0, self.tau0)
                 self.P_prior[state, action] = (
                     self.alpha0 * np.ones(self.nState, dtype=np.float32))
@@ -86,6 +87,7 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
         Returns:
             NULL - updates in place
         '''
+
         mu0, tau0 = self.R_prior[oldState, action]
         tau1 = tau0 + self.tau
         mu1 = (mu0 * tau0 + reward * self.tau) / tau1
@@ -136,8 +138,8 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
         '''
         R_samp = {}
         P_samp = {}
-        for s in xrange(self.nState):
-            for a in xrange(self.nAction):
+        for s in range(self.nState):
+            for a in range(self.nAction):
                 mu, tau = self.R_prior[s, a]
                 R_samp[s, a] = mu + np.random.normal() * 1./np.sqrt(tau)
                 P_samp[s, a] = np.random.dirichlet(self.P_prior[s, a])
@@ -157,8 +159,8 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
         '''
         R_hat = {}
         P_hat = {}
-        for s in xrange(self.nState):
-            for a in xrange(self.nAction):
+        for s in range(self.nState):
+            for a in range(self.nAction):
                 R_hat[s, a] = self.R_prior[s, a][0]
                 P_hat[s, a] = self.P_prior[s, a] / np.sum(self.P_prior[s, a])
 
@@ -359,15 +361,15 @@ class OptimisticPSRL(PSRL):
         self.qVals = qVals
         self.qMax = qMax
 
-        for i in xrange(1, self.nSamp):
+        for i in range(1, self.nSamp):
             # Do another sample and take optimistic Q-values
             R_samp, P_samp = self.sample_mdp()
             qVals, qMax = self.compute_qVals(R_samp, P_samp)
 
-            for timestep in xrange(self.epLen):
+            for timestep in range(self.epLen):
                 self.qMax[timestep] = np.maximum(qMax[timestep],
                                                  self.qMax[timestep])
-                for state in xrange(self.nState):
+                for state in range(self.nState):
                     self.qVals[state, timestep] = np.maximum(qVals[state, timestep],
                                                              self.qVals[state, timestep])
 
@@ -509,8 +511,8 @@ class BOLT(FiniteHorizonTabularAgent):
         R_slack = {}
         P_slack = {}
 
-        for s in xrange(self.nState):
-            for a in xrange(self.nAction):
+        for s in range(self.nState):
+            for a in range(self.nAction):
                 R_slack[s, a] = self.eta / (self.R_prior[s, a][1] + self.eta)
                 P_slack[s, a] = 2 * self.eta / (self.P_prior[s, a].sum() + self.eta)
         return R_slack, P_slack
@@ -568,8 +570,8 @@ class UCRL2(FiniteHorizonTabularAgent):
         P_slack = {}
         delta = self.delta
         scaling = self.scaling
-        for s in xrange(self.nState):
-            for a in xrange(self.nAction):
+        for s in range(self.nState):
+            for a in range(self.nAction):
                 nObsR = max(self.R_prior[s, a][1] - self.tau0, 1.)
                 R_slack[s, a] = scaling * np.sqrt((4 * np.log(2 * self.nState * self.nAction * (time + 1) / delta)) / float(nObsR))
 
@@ -592,6 +594,110 @@ class UCRL2(FiniteHorizonTabularAgent):
 
         self.qVals = qVals
         self.qMax = qMax
+
+#-----------------------------------------------------------------------------
+# UCRL2_GP
+#-----------------------------------------------------------------------------
+
+class UCRL2_GP(UCRL2):
+    '''Efroni+Merlis modifications to UCRL2 for RTDP'''
+
+    def __init__(self, nState, nAction, epLen,
+                 delta=0.05, scaling=1., **kwargs):
+        '''
+        As per the tabular learner, but prior effect --> 0.
+
+        Args:
+            delta - double - probability scale parameter
+            scaling - double - rescale default confidence sets
+        '''
+        super(UCRL2_GP, self).__init__(nState, nAction, epLen,
+                                   alpha0=1e-9, tau0=0.0001)
+        self.delta = delta
+        self.scaling = scaling
+
+        # optimistic initialization
+        self.qVals = {}
+        self.qMax = {}
+        for h in range(epLen+1):
+            for s in range(nState):
+                self.qMax[h] = (epLen-h)*np.ones(nState)
+                if h<self.epLen+1:
+                    for a in range(nAction):
+                        self.qVals[s,h] = (epLen-h)*np.ones(nAction)
+
+        # We need  to use the values from the previous iteration:
+        self.qVals_new = copy.deepcopy(self.qVals)
+
+
+    def update_obs(self, oldState, action, reward, newState, pContinue, h):
+        '''
+        Update the posterior belief based on one transition.
+
+        Args:
+            oldState - int
+            action - int
+            reward - double
+            newState - int
+            pContinue - 0/1
+            h - int - time within episode (not used)
+
+        Returns:
+            NULL - updates in place
+        '''
+
+        mu0, tau0 = self.R_prior[oldState, action]
+        tau1 = tau0 + self.tau
+        mu1 = (mu0 * tau0 + reward * self.tau) / tau1
+        self.R_prior[oldState, action] = (mu1, tau1)
+
+        if pContinue == 1:
+            self.P_prior[oldState, action][newState] += 1
+
+        # Update the Q value for the specific state:
+        self.qVals_new[oldState, h] = self.qVals[oldState, h]
+
+    def update_policy(self, time=100):
+        '''
+        Updates the policy with Forward-pass (similarly to RTDP
+        '''
+
+        # First - copy the Q-values that were actually updated from the previous iteration
+        self.qVals = self.qVals = copy.deepcopy(self.qVals_new)
+
+        # Output the MAP estimate MDP
+        R_hat, P_hat = self.map_mdp()
+
+        # Compute the slack parameters
+        R_slack, P_slack = self.get_slack(time)
+
+        # Perform 'forward' value iteration
+
+        for i in range(self.epLen):
+            for s in range(self.nState):
+                for a in range(self.nAction):
+                    rOpt = R_hat[s, a] + R_slack[s, a]
+
+                    # form pOpt by extended value iteration, pInd sorts the values
+                    pInd = np.argsort(self.qMax[i + 1])
+                    pOpt = P_hat[s, a]
+                    if pOpt[pInd[self.nState - 1]] + P_slack[s, a] * 0.5 > 1:
+                        pOpt = np.zeros(self.nState)
+                        pOpt[pInd[self.nState - 1]] = 1
+                    else:
+                        pOpt[pInd[self.nState - 1]] += P_slack[s, a] * 0.5
+
+                    # Go through all the states and get back to make pOpt a real prob
+                    sLoop = 0
+                    while np.sum(pOpt) > 1:
+                        worst = pInd[sLoop]
+                        pOpt[worst] = max(0, 1 - np.sum(pOpt) + pOpt[worst])
+                        sLoop += 1
+
+                    # Do Bellman backups with the optimistic R and P
+                    self.qVals[s, i][a] = np.minimum(rOpt + np.dot(pOpt, self.qMax[i + 1]),self.qVals[s, i][a])
+
+                self.qMax[i][s] = np.max(self.qVals[s, i])
 
 #-----------------------------------------------------------------------------
 # UCFH
@@ -679,8 +785,8 @@ class UCFH(UCRL2):
         delta = self.delta
         delta1 = self.delta1
         scaling = self.scaling
-        for s in xrange(self.nState):
-            for a in xrange(self.nAction):
+        for s in range(self.nState):
+            for a in range(self.nAction):
                 nObsR = max(self.R_prior[s, a][1] - self.tau0, 1.)
                 R_slack[s, a] = scaling * np.sqrt((4 * np.log(2 * self.nState * self.nAction * (time + 1) / delta)) / nObsR)
 
@@ -708,7 +814,7 @@ class UCFH(UCRL2):
                     pSlack = 1 - pOpt.sum()
 
                     if pSlack < 0:
-                        print 'ERROR we have a problem'
+                        print('ERROR we have a problem')
 
                     for sPrime in range(self.nState):
                         # Reverse the ordering
