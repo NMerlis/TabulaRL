@@ -611,23 +611,21 @@ class UCRL2_GP(UCRL2):
             delta - double - probability scale parameter
             scaling - double - rescale default confidence sets
         '''
-        super(UCRL2_GP, self).__init__(nState, nAction, epLen,
-                                   alpha0=1e-9, tau0=0.0001)
-        self.delta = delta
-        self.scaling = scaling
+        # We use smaller effective delta, due to the additional union bound in comparison to UCRL2
+        super(UCRL2_GP, self).__init__(nState, nAction, epLen,delta*3/4,scaling)
 
         # optimistic initialization
         self.qVals = {}
         self.qMax = {}
         for h in range(epLen+1):
-            for s in range(nState):
-                self.qMax[h] = (epLen-h)*np.ones(nState)
-                if h<self.epLen+1:
+            self.qMax[h] = (epLen - h) * np.ones(nState)
+            if h < self.epLen + 1:
+                for s in range(nState):
                     for a in range(nAction):
                         self.qVals[s,h] = (epLen-h)*np.ones(nAction)
 
-        # We need  to use the values from the previous iteration:
-        self.qVals_new = copy.deepcopy(self.qVals)
+        # We need  to save the values from the previous iteration, so that we update only visited states:
+        self.qMax_new = copy.deepcopy(self.qMax)
 
 
     def update_obs(self, oldState, action, reward, newState, pContinue, h):
@@ -655,7 +653,7 @@ class UCRL2_GP(UCRL2):
             self.P_prior[oldState, action][newState] += 1
 
         # Update the Q value for the specific state:
-        self.qVals_new[oldState, h] = self.qVals[oldState, h]
+        self.qMax_new[h][oldState] = self.qMax[h][oldState]
 
     def update_policy(self, time=100):
         '''
@@ -663,7 +661,7 @@ class UCRL2_GP(UCRL2):
         '''
 
         # First - copy the Q-values that were actually updated from the previous iteration
-        self.qVals = self.qVals = copy.deepcopy(self.qVals_new)
+        self.qMax = copy.deepcopy(self.qMax_new)
 
         # Output the MAP estimate MDP
         R_hat, P_hat = self.map_mdp()
@@ -695,9 +693,251 @@ class UCRL2_GP(UCRL2):
                         sLoop += 1
 
                     # Do Bellman backups with the optimistic R and P
-                    self.qVals[s, i][a] = np.minimum(rOpt + np.dot(pOpt, self.qMax[i + 1]),self.qVals[s, i][a])
+                    self.qVals[s, i][a] = rOpt + np.dot(pOpt, self.qMax[i + 1])
 
-                self.qMax[i][s] = np.max(self.qVals[s, i])
+                self.qMax[i][s] = min(np.max(self.qVals[s, i]),self.qMax[i][s])
+
+#-----------------------------------------------------------------------------
+# EULER
+#-----------------------------------------------------------------------------
+
+class EULER(FiniteHorizonTabularAgent):
+    '''EULER by Zanetta et. al.'''
+
+    def __init__(self, nState, nAction, epLen,
+                 delta=0.05, scaling=1., **kwargs):
+        '''
+        As per the tabular learner, but prior effect --> 0.
+
+        Args:
+            delta - double - probability scale parameter
+            scaling - double - rescale default confidence sets
+        '''
+        super(EULER, self).__init__(nState, nAction, epLen,
+                                    alpha0=1e-5, tau0=0.0001)
+        self.delta = delta
+        self.scaling = scaling
+        self.qMax = {}  # lower bound on the values
+        self.qMin = {} # lower bound on the values
+
+        for h in range(epLen+1):
+                self.qMax[h] = (epLen - h) * np.ones(nState)
+                self.qMin[h] = np.zeros(nState)
+
+        # We need the squared values for the variance calculations:
+        self.R_squared_sum = {}
+
+        for state in range(nState):
+            for action in range(nAction):
+                self.R_squared_sum[state, action] = 0
+
+
+    def get_slack(self, time,h):
+        '''
+        Returns the slackness parameters for UCRL2
+
+        Args:
+            time - int - grows the confidence sets
+            h - int - the timestep inside the episode
+
+        Returns:
+            R_slack - R_slack[s, a] is the confidence width for EULER reward
+            NextVal_slack - P_slack[s, a] is the confidence width for EULER transition+value
+        '''
+
+        # Output the MAP estimate MDP
+        R_hat, P_hat = self.map_mdp()
+
+        R_slack = {}
+        NextVal_slack = {}
+        delta = self.delta
+        delta0 = delta/7
+        scaling = self.scaling
+        L = np.log(4 * self.nState * self.nAction * (time + 1) / delta0) # log term
+        for s in range(self.nState):
+            for a in range(self.nAction):
+
+                nObsR = self.R_prior[s, a][1] - self.tau0
+                nObsR_sat = max(nObsR, 1.)
+                nObsR_minus1_sat = max(nObsR-1, 1.)
+
+                R_variance = (self.R_squared_sum[s,a] -nObsR*R_hat[s,a]**2) / nObsR_minus1_sat
+
+                R_slack[s, a] = scaling * (np.sqrt( 2*R_variance*L / float(nObsR_sat) ) + 14*L/(3*nObsR_minus1_sat))
+
+                nObsP = self.P_prior[s, a].sum() - self.alpha0
+                nObsP_sat = max(nObsP, 1.)
+                nObsP_minus1_sat = max(nObsP - 1, 1.)
+
+                qMax_p = self.qMax[h+1]*P_hat[s,a]
+                V_Variance = np.var(qMax_p)*self.nState/ max(self.nState-1,1)
+                delta_V_norm = np.sqrt(np.sum(P_hat[s,a]*(self.qMax[h+1]-self.qMin[h+1])**2))
+
+                NextVal_slack[s, a] = scaling * (np.sqrt(2*V_Variance*L/nObsP_sat) + self.epLen*L/(3*nObsP_minus1_sat) +  #phi(s,a)
+                                                 self.epLen*(4*L/3 + np.sqrt(2*L))/nObsP_sat + np.sqrt(2*L)*delta_V_norm/np.sqrt(nObsP_sat) )
+        return R_slack, NextVal_slack
+
+    def update_obs(self, oldState, action, reward, newState, pContinue, h):
+        '''
+        Update the posterior belief based on one transition.
+
+        Args:
+            oldState - int
+            action - int
+            reward - double
+            newState - int
+            pContinue - 0/1
+            h - int - time within episode (not used)
+
+        Returns:
+            NULL - updates in place
+        '''
+
+        mu0, tau0 = self.R_prior[oldState, action]
+        tau1 = tau0 + self.tau
+        mu1 = (mu0 * tau0 + reward * self.tau) / tau1
+        self.R_prior[oldState, action] = (mu1, tau1)
+
+        if pContinue == 1:
+            self.P_prior[oldState, action][newState] += 1
+
+        self.R_squared_sum[oldState,action] += reward**2
+
+    def update_policy(self, time=100):
+        '''
+        Compute EULER Q-values via value iteration.
+        '''
+        # Output the MAP estimate MDP
+        R_hat, P_hat = self.map_mdp()
+
+        # Value iteration for EULER
+        qVals = {}
+        qMax = {}
+        qMin = {}
+        qMax[self.epLen] = np.zeros(self.nState)
+        qMin[self.epLen] = np.zeros(self.nState)
+
+        for i in range(self.epLen):
+            j = self.epLen - i - 1
+            qMax[j] = np.zeros(self.nState)
+            qMin[j] = np.zeros(self.nState)
+
+            R_slack, NextVal_slack = self.get_slack(time,j)
+
+            for s in range(self.nState):
+                qVals[s, j] = np.zeros(self.nAction)
+
+                for a in range(self.nAction):
+                    rOpt = R_hat[s, a] + R_slack[s, a]
+
+                    NextValOpt = np.dot(P_hat[s, a],qMax[j + 1]) + NextVal_slack[s,a]
+
+                    # Do Bellman backups with the optimistic R and next value
+                    qVals[s, j][a] = rOpt + NextValOpt
+                    if qVals[s, j][a] is None:
+                        print('blah')
+
+                best_action= np.argmax(qVals[s, j])
+                qMax[j][s] = min(qVals[s,j][best_action],self.epLen-j)
+                NextValPass = R_hat[s, best_action] - R_slack[s, best_action] + \
+                              np.dot(P_hat[s, best_action],qMin[j + 1])- NextVal_slack[s,best_action] # passimistic
+                qMin[j][s] = max(NextValPass,0)
+
+        self.qVals = qVals
+        self.qMax = qMax
+        self.qMin = qMin
+
+
+#-----------------------------------------------------------------------------
+# EULER_GP
+#-----------------------------------------------------------------------------
+
+class EULER_GP(EULER):
+    '''Efroni+Merlis modifications to EULER for RTDP'''
+
+    def __init__(self, nState, nAction, epLen,
+                 delta=0.05, scaling=1., **kwargs):
+        '''
+        As per the tabular learner, but prior effect --> 0.
+
+        Args:
+            delta - double - probability scale parameter
+            scaling - double - rescale default confidence sets
+        '''
+        # We use smaller effective delta, due to the additional union bound in comparison to EULER
+        super(EULER_GP, self).__init__(nState, nAction, epLen,delta*7/9, scaling)
+
+        # We need  to save the values from the previous iteration, so that we update only visited states:
+        self.qMax_new = copy.deepcopy(self.qMax)
+        self.qMin_new = copy.deepcopy(self.qMin)
+
+
+
+    def update_obs(self, oldState, action, reward, newState, pContinue, h):
+        '''
+        Update the posterior belief based on one transition.
+
+        Args:
+            oldState - int
+            action - int
+            reward - double
+            newState - int
+            pContinue - 0/1
+            h - int - time within episode (not used)
+
+        Returns:
+            NULL - updates in place
+        '''
+
+        mu0, tau0 = self.R_prior[oldState, action]
+        tau1 = tau0 + self.tau
+        mu1 = (mu0 * tau0 + reward * self.tau) / tau1
+        self.R_prior[oldState, action] = (mu1, tau1)
+
+        if pContinue == 1:
+            self.P_prior[oldState, action][newState] += 1
+
+        self.R_squared_sum[oldState,action] += reward**2
+
+        # Update the values for the specific state:
+        self.qMax_new[h][oldState] = self.qMax[h][oldState]
+        self.qMin_new[h][oldState] = self.qMin[h][oldState]
+
+    def update_policy(self, time=100):
+        '''
+        Compute EULER Q-values via value iteration.
+        '''
+
+        # First - copy the values that were actually updated from the previous iteration
+        self.qMax = copy.deepcopy(self.qMax_new)
+        self.qMin = copy.deepcopy(self.qMin_new)
+        qVals = {}
+
+        # Output the MAP estimate MDP
+        R_hat, P_hat = self.map_mdp()
+
+        # Value iteration for EULER
+        for i in range(self.epLen):
+
+            R_slack, NextVal_slack = self.get_slack(time,i)
+
+            for s in range(self.nState):
+                qVals[s, i] = np.zeros(self.nAction)
+                for a in range(self.nAction):
+                    rOpt = R_hat[s, a] + R_slack[s, a]
+
+                    NextValOpt = np.dot(P_hat[s, a],self.qMax[i + 1]) + NextVal_slack[s,a]
+
+                    # Do Bellman backups with the optimistic R and next value
+                    qVals[s, i][a] = rOpt + NextValOpt
+
+                best_action= np.argmax(qVals[s, i])
+                self.qMax[i][s] = min(qVals[s,i][best_action],self.qMax[i][s])
+                NextValPass = R_hat[s, best_action] - R_slack[s, best_action] + \
+                              np.dot(P_hat[s, best_action],self.qMin[i + 1])- NextVal_slack[s,best_action] # passimistic
+                self.qMin[i][s] = max(NextValPass,self.qMin[i][s])
+
+        self.qVals = qVals
 
 #-----------------------------------------------------------------------------
 # UCFH

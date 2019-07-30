@@ -9,11 +9,11 @@ import pandas as pd
 import argparse
 import sys
 
-import environment
-import finite_tabular_agents
+from src import environment
+from src import finite_tabular_agents
 
-from feature_extractor import FeatureTrueState
-from experiment import run_finite_tabular_experiment
+from src.feature_extractor import FeatureTrueState
+from src.experiment import run_finite_tabular_experiment
 from shutil import copyfile
 
 alg_dict = {'PSRL': finite_tabular_agents.PSRL,
@@ -189,9 +189,9 @@ def run_bandit_confidence(seed, a, mul, targetPath='tmp.csv'):
     dt = pd.DataFrame(results)
     dt.to_csv('tmp.csv', index=False, float_format='%.2f')
     copyfile('tmp.csv', targetPath)
-    print '********************************************'
-    print 'SUCCESS'
-    print '********************************************'
+    print('********************************************')
+    print('SUCCESS')
+    print('********************************************')
 
 
 

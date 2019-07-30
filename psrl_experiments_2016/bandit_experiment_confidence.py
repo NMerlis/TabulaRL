@@ -9,11 +9,11 @@ import pandas as pd
 import argparse
 import sys
 
-import environment
-import finite_tabular_agents
+from src import environment
+from src import finite_tabular_agents
 
-from feature_extractor import FeatureTrueState
-from bandit_confidence import run_bandit_confidence
+from src.feature_extractor import FeatureTrueState
+from src.experiment import run_finite_tabular_experiment
 
 
 
@@ -43,9 +43,9 @@ if __name__ == '__main__':
 
     folderName = './'
     targetPath = folderName + fileName
-    print '******************************************************************'
-    print fileName
-    print '******************************************************************'
+    print('******************************************************************')
+    print(fileName)
+    print('******************************************************************')
 
     # Run the experiment
     run_bandit_confidence(args.seed, args.alg, args.epLen, targetPath)
