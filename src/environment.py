@@ -325,7 +325,64 @@ def make_stochasticGrid(gridSize,epLen,pNoise,rewardVar):
 
     return stochasticGrid
 
+def make_stochastic2dChain(gridSize):
+    '''
+    Creates a difficult stochastic grid MDP with four actions, which is similar to the 1d chain
 
+    Args:
+        gridSize - int - the size of the grid (total gridSize x gridSize states
+
+    Returns:
+        gridMDP - Tabular MDP environment
+    '''
+    nState = gridSize*gridSize
+    epLen = 2*gridSize-1
+    nAction = 4
+
+    pNoise = 1/epLen
+
+    R_true = {}
+    P_true = {}
+
+    for s in range(nState):
+        for a in range(nAction):
+            R_true[s, a] = (0, 0)
+            P_true[s, a] = np.zeros(nState)
+
+    # reward for going into the corner at the initial state
+    R_true[0, 0] = (0, 1) #'up'
+    R_true[0, 2] = (0, 1) #'left'
+
+    # reward for going into the corner at the final state
+    R_true[nState - 1, 1] = (1, 1)  # 'down'
+    R_true[nState - 1, 3] = (1, 1)  # 'right'
+
+    # Transitions
+    for s in range(nState):
+        nextState = [None]*4
+        if s >= nState-2: # moving to the terminal state
+            for action in range(nAction):
+                nextState[action] = nState-1
+        else:
+            nextState[0] = s-1 if s%gridSize>0 else s #'up'
+            nextState[1] = s+1 if (s+1)%gridSize>0 else s  # 'down'
+            nextState[2] = s - gridSize if s >= gridSize else s  # 'left'
+            nextState[3] = s + gridSize if s+gridSize <= nState-1 else s  # 'right'
+
+        for action in range(nAction):
+            # adding noise to move up or left
+            P_true[s, action][nextState[0]] += pNoise/2 #'up'
+            P_true[s, action][nextState[2]] += pNoise/2 # 'left'
+            # the desired direction:
+            P_true[s, action][nextState[action]] += 1-pNoise
+
+
+    stochastic2dChain = TabularMDP(nState, nAction, epLen)
+    stochastic2dChain.R = R_true
+    stochastic2dChain.P = P_true
+    stochastic2dChain.reset()
+
+    return stochastic2dChain
 def make_bootDQNChain(nState=6, epLen=15, nAction=2):
     '''
     Creates the chain from Bootstrapped DQN

@@ -292,7 +292,7 @@ class PSRL(FiniteHorizonTabularAgent):
     Posterior Sampling for Reinforcement Learning
     '''
 
-    def update_policy(self, h=False):
+    def update_policy(self, h=False, nEps=False):
         '''
         Sample a single MDP from the posterior and solve for optimal Q values.
 
@@ -349,7 +349,7 @@ class OptimisticPSRL(PSRL):
                                              alpha0, mu0, tau0, tau)
         self.nSamp = nSamp
 
-    def update_policy(self, h=False):
+    def update_policy(self, h=False, nEps=False):
         '''
         Take multiple samples and then take the optimistic envelope.
 
@@ -406,7 +406,7 @@ class GaussianPSRL(FiniteHorizonTabularAgent):
 
         return R_bonus, P_bonus
 
-    def update_policy(self, h=False):
+    def update_policy(self, h=False, nEps=False):
         '''
         Update Q values via Gaussian PSRL.
         This performs value iteration but with additive Gaussian noise.
@@ -517,7 +517,7 @@ class BOLT(FiniteHorizonTabularAgent):
                 P_slack[s, a] = 2 * self.eta / (self.P_prior[s, a].sum() + self.eta)
         return R_slack, P_slack
 
-    def update_policy(self, h=False):
+    def update_policy(self, h=False, nEps=False):
         '''
         Compute BOLT Q-values via extended value iteration.
         '''
@@ -573,13 +573,13 @@ class UCRL2(FiniteHorizonTabularAgent):
         for s in range(self.nState):
             for a in range(self.nAction):
                 nObsR = max(self.R_prior[s, a][1] - self.tau0, 1.)
-                R_slack[s, a] = scaling * np.sqrt((4 * np.log(2 * self.nState * self.nAction * (time + 1) / delta)) / float(nObsR))
+                R_slack[s, a] = scaling * np.sqrt((2 * np.log(6 * self.nState * self.nAction * (time+1) / delta)) / float(nObsR))
 
                 nObsP = max(self.P_prior[s, a].sum() - self.alpha0, 1.)
-                P_slack[s, a] = scaling * np.sqrt((4 * self.nState * np.log(2 * self.nState * self.nAction * (time + 1) / delta)) / float(nObsP))
+                P_slack[s, a] = scaling * np.sqrt((4 * self.nState * np.log(9 * self.nState * self.nAction * (time + 1) / delta)) / float(nObsP))
         return R_slack, P_slack
 
-    def update_policy(self, time=100):
+    def update_policy(self, time=100,nEps=100):
         '''
         Compute UCRL2 Q-values via extended value iteration.
         '''
@@ -587,7 +587,7 @@ class UCRL2(FiniteHorizonTabularAgent):
         R_hat, P_hat = self.map_mdp()
 
         # Compute the slack parameters
-        R_slack, P_slack = self.get_slack(time)
+        R_slack, P_slack = self.get_slack(nEps*self.epLen)
 
         # Perform extended value iteration
         qVals, qMax = self.compute_qVals_EVI(R_hat, P_hat, R_slack, P_slack)
@@ -655,7 +655,7 @@ class UCRL2_GP(UCRL2):
         # Update the Q value for the specific state:
         self.qMax_new[h][oldState] = self.qMax[h][oldState]
 
-    def update_policy(self, time=100):
+    def update_policy(self, time=100,nEps=100):
         '''
         Updates the policy with Forward-pass (similarly to RTDP
         '''
@@ -667,7 +667,7 @@ class UCRL2_GP(UCRL2):
         R_hat, P_hat = self.map_mdp()
 
         # Compute the slack parameters
-        R_slack, P_slack = self.get_slack(time)
+        R_slack, P_slack = self.get_slack(nEps*self.epLen)
 
         # Perform 'forward' value iteration
 
@@ -753,7 +753,7 @@ class EULER(FiniteHorizonTabularAgent):
         delta = self.delta
         delta0 = delta/7
         scaling = self.scaling
-        L = np.log(4 * self.nState * self.nAction * (time + 1) / delta0) # log term
+        L = np.log(4 * self.nState * self.nAction * time / delta0) # log term
         for s in range(self.nState):
             for a in range(self.nAction):
 
@@ -803,7 +803,7 @@ class EULER(FiniteHorizonTabularAgent):
 
         self.R_squared_sum[oldState,action] += reward**2
 
-    def update_policy(self, time=100):
+    def update_policy(self, time=100,nEps=100):
         '''
         Compute EULER Q-values via value iteration.
         '''
@@ -822,7 +822,7 @@ class EULER(FiniteHorizonTabularAgent):
             qMax[j] = np.zeros(self.nState)
             qMin[j] = np.zeros(self.nState)
 
-            R_slack, NextVal_slack = self.get_slack(time,j)
+            R_slack, NextVal_slack = self.get_slack(nEps*self.epLen,j)
 
             for s in range(self.nState):
                 qVals[s, j] = np.zeros(self.nAction)
@@ -903,7 +903,7 @@ class EULER_GP(EULER):
         self.qMax_new[h][oldState] = self.qMax[h][oldState]
         self.qMin_new[h][oldState] = self.qMin[h][oldState]
 
-    def update_policy(self, time=100):
+    def update_policy(self, time=100,nEps=100):
         '''
         Compute EULER Q-values via value iteration.
         '''
@@ -919,7 +919,7 @@ class EULER_GP(EULER):
         # Value iteration for EULER
         for i in range(self.epLen):
 
-            R_slack, NextVal_slack = self.get_slack(time,i)
+            R_slack, NextVal_slack = self.get_slack(nEps*self.epLen,i)
 
             for s in range(self.nState):
                 qVals[s, i] = np.zeros(self.nAction)
@@ -1008,7 +1008,7 @@ class UCFH(UCRL2):
         return interval
 
 
-    def update_policy(self, time=100):
+    def update_policy(self, time=100,nEps=100):
         '''
         Updates the policy with UCFH extended value iteration
         '''
@@ -1088,7 +1088,7 @@ class EpsilonGreedy(FiniteHorizonTabularAgent):
                                             alpha0=0.0001, tau0=0.0001)
         self.epsilon = epsilon
 
-    def update_policy(self, time=False):
+    def update_policy(self, time=False, nEps=False):
         '''
         Compute UCRL Q-values via extended value iteration.
 

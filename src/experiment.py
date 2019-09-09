@@ -9,6 +9,7 @@ import pandas as pd
 
 from shutil import copyfile
 
+
 def run_finite_tabular_experiment(agent, env, f_ext, nEps, seed=1,
                     recFreq=100, fileFreq=1000, targetPath='tmp.csv'):
     '''
@@ -40,7 +41,7 @@ def run_finite_tabular_experiment(agent, env, f_ext, nEps, seed=1,
         env.reset()
         epMaxVal = qMax[env.timestep][env.state]
 
-        agent.update_policy(ep)
+        agent.update_policy(ep,nEps)
 
         epReward = 0
         epRegret = 0
