@@ -575,7 +575,7 @@ class UCRL2(FiniteHorizonTabularAgent):
                 nObsR = max(self.R_prior[s, a][1] - self.tau0, 1.)
                 R_slack[s, a] = scaling * np.sqrt((2 * np.log(6 * self.nState * self.nAction * (time+1) / delta)) / float(nObsR))
 
-                nObsP = max(self.P_prior[s, a].sum() - self.alpha0, 1.)
+                nObsP = max(self.P_prior[s, a].sum() - self.alpha0*self.nState, 1.)
                 P_slack[s, a] = scaling * np.sqrt((4 * self.nState * np.log(9 * self.nState * self.nAction * (time + 1) / delta)) / float(nObsP))
         return R_slack, P_slack
 
@@ -669,7 +669,7 @@ class UCRL2_GP(UCRL2):
         # Compute the slack parameters
         R_slack, P_slack = self.get_slack(nEps*self.epLen)
 
-        # Perform 'forward' value iteration
+        # Perform 'forward' extended value iteration
 
         for i in range(self.epLen):
             for s in range(self.nState):
@@ -679,7 +679,7 @@ class UCRL2_GP(UCRL2):
                     # form pOpt by extended value iteration, pInd sorts the values
                     pInd = np.argsort(self.qMax[i + 1])
                     pOpt = P_hat[s, a]
-                    if pOpt[pInd[self.nState - 1]] + P_slack[s, a] * 0.5 > 1:
+                    if pOpt[pInd[self.nState - 1]] + P_slack[s, a] * 0.5 >= 1:
                         pOpt = np.zeros(self.nState)
                         pOpt[pInd[self.nState - 1]] = 1
                     else:
@@ -761,20 +761,19 @@ class EULER(FiniteHorizonTabularAgent):
                 nObsR_sat = max(nObsR, 1.)
                 nObsR_minus1_sat = max(nObsR-1, 1.)
 
-                R_variance = (self.R_squared_sum[s,a] -nObsR*R_hat[s,a]**2) / nObsR_minus1_sat
+                R_variance = (self.R_squared_sum[s,a] -nObsR*R_hat[s,a]**2) / nObsR_minus1_sat # unbiased variance estimator
 
-                R_slack[s, a] = scaling * (np.sqrt( 2*R_variance*L / float(nObsR_sat) ) + 14*L/(3*nObsR_minus1_sat))
+                R_slack[s, a] = scaling * (np.sqrt( 2*R_variance*L / float(nObsR_sat) ) + 14*L/(3*nObsR_sat))
 
-                nObsP = self.P_prior[s, a].sum() - self.alpha0
+                nObsP = self.P_prior[s, a].sum() - self.alpha0*self.nState
                 nObsP_sat = max(nObsP, 1.)
-                nObsP_minus1_sat = max(nObsP - 1, 1.)
 
-                qMax_p = self.qMax[h+1]*P_hat[s,a]
-                V_Variance = np.var(qMax_p)*self.nState/ max(self.nState-1,1)
-                delta_V_norm = np.sqrt(np.sum(P_hat[s,a]*(self.qMax[h+1]-self.qMin[h+1])**2))
+                V_Variance = np.dot(P_hat[s,a],(self.qMax[h+1] - np.dot(P_hat[s,a],self.qMax[h+1]))**2)
 
-                NextVal_slack[s, a] = scaling * (np.sqrt(2*V_Variance*L/nObsP_sat) + self.epLen*L/(3*nObsP_minus1_sat) +  #phi(s,a)
-                                                 self.epLen*(4*L/3 + np.sqrt(2*L))/nObsP_sat + np.sqrt(2*L)*delta_V_norm/np.sqrt(nObsP_sat) )
+                delta_V_norm = np.sqrt(np.dot(P_hat[s,a],(self.qMax[h+1]-self.qMin[h+1])**2))
+
+                NextVal_slack[s, a] = scaling * (np.sqrt(2*V_Variance*L/nObsP_sat) + 2*self.epLen*L/(3*nObsP_sat) +  #phi(s,a)
+                                                 self.epLen*(8*L/3 + np.sqrt(2*L))/nObsP_sat + np.sqrt(2*L)*delta_V_norm/np.sqrt(nObsP_sat) )
         return R_slack, NextVal_slack
 
     def update_obs(self, oldState, action, reward, newState, pContinue, h):
@@ -834,8 +833,6 @@ class EULER(FiniteHorizonTabularAgent):
 
                     # Do Bellman backups with the optimistic R and next value
                     qVals[s, j][a] = rOpt + NextValOpt
-                    if qVals[s, j][a] is None:
-                        print('blah')
 
                 best_action= np.argmax(qVals[s, j])
                 qMax[j][s] = min(qVals[s,j][best_action],self.epLen-j)
