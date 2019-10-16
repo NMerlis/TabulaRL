@@ -360,14 +360,10 @@ def make_stochastic2dChain(gridSize):
     # Transitions
     for s in range(nState):
         nextState = [None]*4
-        if s >= nState-2: # moving to the terminal state
-            for action in range(nAction):
-                nextState[action] = nState-1
-        else:
-            nextState[0] = s-1 if s%gridSize>0 else s #'up'
-            nextState[1] = s+1 if (s+1)%gridSize>0 else s  # 'down'
-            nextState[2] = s - gridSize if s >= gridSize else s  # 'left'
-            nextState[3] = s + gridSize if s+gridSize <= nState-1 else s  # 'right'
+        nextState[0] = s-1 if s%gridSize>0 else s #'up'
+        nextState[1] = s+1 if (s+1)%gridSize>0 else s  # 'down'
+        nextState[2] = s - gridSize if s >= gridSize else s  # 'left'
+        nextState[3] = s + gridSize if s+gridSize <= nState-1 else s  # 'right'
 
         for action in range(nAction):
             # adding noise to move up or left
