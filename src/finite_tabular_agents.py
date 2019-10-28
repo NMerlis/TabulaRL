@@ -118,7 +118,7 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
 
         return action
 
-    def pick_action(self, state, timestep):
+    def pick_action(self, state, timestep,nEps=100):
         '''
         Default is to use egreedy for action selection
         '''
@@ -231,7 +231,7 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
 
         return qVals, qMax
 
-    def compute_qVals_EVI(self, R, P, R_slack, P_slack):
+    def compute_qVals_EVI(self, R, P, R_slack, P_slack, qMax = {}):
         '''
         Compute the Q values for a given R, P by extended value iteration
 
@@ -240,19 +240,26 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
             P - P[s,a] = probability vector of transitions
             R_slack - R_slack[s,a] = slack for rewards
             P_slack - P_slack[s,a] = slack for transitions
+            qMax - Initial qMax values (taking the minimum between previous value and the new value)
+                   It allows testing the effect of intersecting the confidence interval - leave empty to ignore
 
         Returns:
             qVals - qVals[state, timestep] is vector of Q values for each action
             qMax - qMax[timestep] is the vector of optimal values at timestep
         '''
-                # Extended value iteration
+        # Extended value iteration
         qVals = {}
-        qMax = {}
-        qMax[self.epLen] = np.zeros(self.nState)
+        if not qMax: # no qMax was provided - we calculate everything from scratch
+            calc_minimum = False
+            qMax = {}
+            qMax[self.epLen] = np.zeros(self.nState)
+        else: # when updating qMax, we take the minimum between the new and previous value
+            calc_minimum = True
 
         for i in range(self.epLen):
             j = self.epLen - i - 1
-            qMax[j] = np.zeros(self.nState)
+            if not calc_minimum:
+                qMax[j] = np.zeros(self.nState)
 
             for s in range(self.nState):
                 qVals[s, j] = np.zeros(self.nAction)
@@ -262,7 +269,7 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
 
                     # form pOpt by extended value iteration, pInd sorts the values
                     pInd = np.argsort(qMax[j + 1])
-                    pOpt = P[s, a]
+                    pOpt = np.copy(P[s, a])
                     if pOpt[pInd[self.nState - 1]] + P_slack[s, a] * 0.5 > 1:
                         pOpt = np.zeros(self.nState)
                         pOpt[pInd[self.nState - 1]] = 1
@@ -279,7 +286,10 @@ class FiniteHorizonTabularAgent(FiniteHorizonAgent):
                     # Do Bellman backups with the optimistic R and P
                     qVals[s, j][a] = rOpt + np.dot(pOpt, qMax[j + 1])
 
-                qMax[j][s] = np.max(qVals[s, j])
+                if calc_minimum:
+                    qMax[j][s] = min(np.max(qVals[s, j]), qMax[j][s])
+                else:
+                    qMax[j][s] = np.max(qVals[s, j])
 
         return qVals, qMax
 
@@ -554,6 +564,16 @@ class UCRL2(FiniteHorizonTabularAgent):
         self.delta = delta
         self.scaling = scaling
 
+        # optimistic initialization
+        self.qVals = {}
+        self.qMax = {}
+        for h in range(epLen + 1):
+            self.qMax[h] = (epLen - h) * np.ones(nState)
+            if h < self.epLen + 1:
+                for s in range(nState):
+                    for a in range(nAction):
+                        self.qVals[s, h] = (epLen - h) * np.ones(nAction)
+
 
     def get_slack(self, time):
         '''
@@ -600,7 +620,9 @@ class UCRL2(FiniteHorizonTabularAgent):
 #-----------------------------------------------------------------------------
 
 class UCRL2_GP(UCRL2):
-    '''Efroni+Merlis modifications to UCRL2 for RTDP'''
+    '''Efroni+Merlis modifications to UCRL2 for RTDP
+    This implementation mostly keeps the modules' functionality as other algorithms, but less efficient than
+    UCRL2_GP_RTDP'''
 
     def __init__(self, nState, nAction, epLen,
                  delta=0.05, scaling=1., **kwargs):
@@ -611,7 +633,7 @@ class UCRL2_GP(UCRL2):
             delta - double - probability scale parameter
             scaling - double - rescale default confidence sets
         '''
-        # We use smaller effective delta, due to the additional union bound in comparison to UCRL2
+        # We use smaller effective delta, due to the additional union bounds in comparison to UCRL2
         super(UCRL2_GP, self).__init__(nState, nAction, epLen,delta*3/4,scaling)
 
         # optimistic initialization
@@ -652,14 +674,14 @@ class UCRL2_GP(UCRL2):
         if pContinue == 1:
             self.P_prior[oldState, action][newState] += 1
 
-        # Update the Q value for the specific state:
+        # Update the Q value for the specific state we visited:
         self.qMax_new[h][oldState] = self.qMax[h][oldState]
 
     def update_policy(self, time=100,nEps=100):
         '''
-        Updates the policy with Forward-pass (similarly to RTDP
+        Updates the policy with Forward-pass (similarly to RTDP)
+        In this function, we update all of the states. Later, we will copy only the visited states in update_obs
         '''
-
         # First - copy the Q-values that were actually updated from the previous iteration
         self.qMax = copy.deepcopy(self.qMax_new)
 
@@ -678,7 +700,7 @@ class UCRL2_GP(UCRL2):
 
                     # form pOpt by extended value iteration, pInd sorts the values
                     pInd = np.argsort(self.qMax[i + 1])
-                    pOpt = P_hat[s, a]
+                    pOpt = np.copy(P_hat[s, a])
                     if pOpt[pInd[self.nState - 1]] + P_slack[s, a] * 0.5 >= 1:
                         pOpt = np.zeros(self.nState)
                         pOpt[pInd[self.nState - 1]] = 1
@@ -698,11 +720,127 @@ class UCRL2_GP(UCRL2):
                 self.qMax[i][s] = min(np.max(self.qVals[s, i]),self.qMax[i][s])
 
 #-----------------------------------------------------------------------------
+# UCRL2_GP_RTDP
+#-----------------------------------------------------------------------------
+
+class UCRL2_GP_RTDP(UCRL2):
+    '''Efroni+Merlis modifications to UCRL2 for RTDP
+    This implementation directly implements RTDP, and 'bypasses' the code natural structure, but is more efficient.'''
+
+    def __init__(self, nState, nAction, epLen,
+                 delta=0.05, scaling=1., **kwargs):
+        '''
+        As per the tabular learner, but prior effect --> 0.
+
+        Args:
+            delta - double - probability scale parameter
+            scaling - double - rescale default confidence sets
+        '''
+        # We use smaller effective delta, due to the additional union bound in comparison to UCRL2
+        super(UCRL2_GP_RTDP, self).__init__(nState, nAction, epLen,delta*3/4,scaling)
+
+        # optimistic initialization
+        self.qVals = {}
+        self.qMax = {}
+        for h in range(epLen+1):
+            self.qMax[h] = (epLen - h) * np.ones(nState)
+            if h < self.epLen + 1:
+                for s in range(nState):
+                    for a in range(nAction):
+                        self.qVals[s,h] = (epLen-h)*np.ones(nAction)
+
+        # We need  to save the visitations from the previous iteration, so we don't take into account the state
+        # visitation in the current episode when updating the value
+        self.R_prior_new = copy.deepcopy(self.R_prior)
+        self.P_prior_new = copy.deepcopy(self.P_prior)
+
+
+    def pick_action(self, state, timestep, nEps):
+
+        '''
+        Updates the policy with Forward-pass (similarly to RTDP)
+        '''
+
+        # Output the MAP estimate MDP
+        R_hat, P_hat = self.map_mdp()
+
+        # Compute the slack parameters
+        R_slack, P_slack = self.get_slack(nEps * self.epLen)
+
+        # Perform 'forward' extended value iteration step
+        for a in range(self.nAction):
+            rOpt = R_hat[state, a] + R_slack[state, a]
+
+            # form pOpt by extended value iteration, pInd sorts the values
+            pInd = np.argsort(self.qMax[timestep + 1])
+            pOpt = np.copy(P_hat[state, a])
+            if pOpt[pInd[self.nState - 1]] + P_slack[state, a] * 0.5 >= 1:
+                pOpt = np.zeros(self.nState)
+                pOpt[pInd[self.nState - 1]] = 1
+            else:
+                pOpt[pInd[self.nState - 1]] += P_slack[state, a] * 0.5
+
+            # Go through all the states and get back to make pOpt a real prob
+            sLoop = 0
+            while np.sum(pOpt) > 1:
+                worst = pInd[sLoop]
+                pOpt[worst] = max(0, 1 - np.sum(pOpt) + pOpt[worst])
+                sLoop += 1
+
+            # Do Bellman backups with the optimistic R and P
+            self.qVals[state, timestep][a] = rOpt + np.dot(pOpt, self.qMax[timestep + 1])
+
+        self.qMax[timestep][state] = min(np.max(self.qVals[state, timestep]), self.qMax[timestep][state])
+
+
+        '''
+        Default is to use egreedy for action selection
+        '''
+        action = self.egreedy(state, timestep)
+        return action
+
+    def update_obs(self, oldState, action, reward, newState, pContinue, h):
+        '''
+        Update the posterior belief based on one transition.
+
+        Args:
+            oldState - int
+            action - int
+            reward - double
+            newState - int
+            pContinue - 0/1
+            h - int - time within episode (not used)
+
+        Returns:
+            NULL - updates in place
+        '''
+
+        mu0, tau0 = self.R_prior_new[oldState, action]
+        tau1 = tau0 + self.tau
+        mu1 = (mu0 * tau0 + reward * self.tau) / tau1
+        self.R_prior_new[oldState, action] = (mu1, tau1)
+
+        if pContinue == 1:
+            self.P_prior_new[oldState, action][newState] += 1
+
+
+    def update_policy(self, time=100,nEps=100):
+        '''
+        Save the counts \ empirical estimates copies
+        '''
+
+        # Update the counts
+        self.R_prior = copy.deepcopy(self.R_prior_new)
+        self.P_prior = copy.deepcopy(self.P_prior_new)
+
+
+
+#-----------------------------------------------------------------------------
 # EULER
 #-----------------------------------------------------------------------------
 
 class EULER(FiniteHorizonTabularAgent):
-    '''EULER by Zanetta et. al.'''
+    '''EULER by Zanette and Brunskill, 2019'''
 
     def __init__(self, nState, nAction, epLen,
                  delta=0.05, scaling=1., **kwargs):
@@ -754,24 +892,31 @@ class EULER(FiniteHorizonTabularAgent):
         delta0 = delta/7
         scaling = self.scaling
         L = np.log(4 * self.nState * self.nAction * time / delta0) # log term
+        # doing the value iteration + optimism for EULER
         for s in range(self.nState):
             for a in range(self.nAction):
-
+                # reward counts
                 nObsR = self.R_prior[s, a][1] - self.tau0
                 nObsR_sat = max(nObsR, 1.)
                 nObsR_minus1_sat = max(nObsR-1, 1.)
 
+                # calculated the unbiased reward variance estimator
                 R_variance = (self.R_squared_sum[s,a] -nObsR*R_hat[s,a]**2) / nObsR_minus1_sat # unbiased variance estimator
 
+                # reward optimism
                 R_slack[s, a] = scaling * (np.sqrt( 2*R_variance*L / float(nObsR_sat) ) + 14*L/(3*nObsR_sat))
 
+                # transition counts
                 nObsP = self.P_prior[s, a].sum() - self.alpha0*self.nState
                 nObsP_sat = max(nObsP, 1.)
 
+                # calculating the value variance w.r.t. the estimated transtion kernel
                 V_Variance = np.dot(P_hat[s,a],(self.qMax[h+1] - np.dot(P_hat[s,a],self.qMax[h+1]))**2)
 
+                # calculating the the weighted norm of the difference between the upper and lower bounds of the value
                 delta_V_norm = np.sqrt(np.dot(P_hat[s,a],(self.qMax[h+1]-self.qMin[h+1])**2))
 
+                # calculating all the total confidence interval on p^T*V
                 NextVal_slack[s, a] = scaling * (np.sqrt(2*V_Variance*L/nObsP_sat) + 2*self.epLen*L/(3*nObsP_sat) +  #phi(s,a)
                                                  self.epLen*(8*L/3 + np.sqrt(2*L))/nObsP_sat + np.sqrt(2*L)*delta_V_norm/np.sqrt(nObsP_sat) )
         return R_slack, NextVal_slack
@@ -829,13 +974,14 @@ class EULER(FiniteHorizonTabularAgent):
                 for a in range(self.nAction):
                     rOpt = R_hat[s, a] + R_slack[s, a]
 
-                    NextValOpt = np.dot(P_hat[s, a],qMax[j + 1]) + NextVal_slack[s,a]
+                    NextValOpt = np.dot(P_hat[s, a],qMax[j + 1]) + NextVal_slack[s,a] # optimistic p^T*V
 
                     # Do Bellman backups with the optimistic R and next value
                     qVals[s, j][a] = rOpt + NextValOpt
 
                 best_action= np.argmax(qVals[s, j])
                 qMax[j][s] = min(qVals[s,j][best_action],self.epLen-j)
+
                 NextValPass = R_hat[s, best_action] - R_slack[s, best_action] + \
                               np.dot(P_hat[s, best_action],qMin[j + 1])- NextVal_slack[s,best_action] # passimistic
                 qMin[j][s] = max(NextValPass,0)
@@ -850,7 +996,9 @@ class EULER(FiniteHorizonTabularAgent):
 #-----------------------------------------------------------------------------
 
 class EULER_GP(EULER):
-    '''Efroni+Merlis modifications to EULER for RTDP'''
+    '''Efroni+Merlis modifications to EULER for RTDP
+    This implementation mostly keeps the modules' functionality as other algorithms, but less efficient than
+    EULER_GP_RTDP'''
 
     def __init__(self, nState, nAction, epLen,
                  delta=0.05, scaling=1., **kwargs):
@@ -896,13 +1044,14 @@ class EULER_GP(EULER):
 
         self.R_squared_sum[oldState,action] += reward**2
 
-        # Update the values for the specific state:
+        # Update the values for the specific state we visited:
         self.qMax_new[h][oldState] = self.qMax[h][oldState]
         self.qMin_new[h][oldState] = self.qMin[h][oldState]
 
     def update_policy(self, time=100,nEps=100):
         '''
         Compute EULER Q-values via value iteration.
+        In this function, we update all of the states. Later, we will copy only the visited states in update_obs.
         '''
 
         # First - copy the values that were actually updated from the previous iteration
@@ -923,18 +1072,117 @@ class EULER_GP(EULER):
                 for a in range(self.nAction):
                     rOpt = R_hat[s, a] + R_slack[s, a]
 
-                    NextValOpt = np.dot(P_hat[s, a],self.qMax[i + 1]) + NextVal_slack[s,a]
+                    NextValOpt = np.dot(P_hat[s, a],self.qMax[i + 1]) + NextVal_slack[s,a] # optimistic p^T*V
 
                     # Do Bellman backups with the optimistic R and next value
                     qVals[s, i][a] = rOpt + NextValOpt
 
                 best_action= np.argmax(qVals[s, i])
                 self.qMax[i][s] = min(qVals[s,i][best_action],self.qMax[i][s])
+
                 NextValPass = R_hat[s, best_action] - R_slack[s, best_action] + \
                               np.dot(P_hat[s, best_action],self.qMin[i + 1])- NextVal_slack[s,best_action] # passimistic
                 self.qMin[i][s] = max(NextValPass,self.qMin[i][s])
 
         self.qVals = qVals
+
+
+#-----------------------------------------------------------------------------
+# EULER_GP_RTDP
+#-----------------------------------------------------------------------------
+
+class EULER_GP_RTDP(EULER):
+    '''Efroni+Merlis modifications to EULER for RTDP
+    This implementation directly implements RTDP, and 'bypasses' the code natural structure, but is more efficient.'''
+
+    def __init__(self, nState, nAction, epLen,
+                 delta=0.05, scaling=1., **kwargs):
+        '''
+        As per the tabular learner, but prior effect --> 0.
+
+        Args:
+            delta - double - probability scale parameter
+            scaling - double - rescale default confidence sets
+        '''
+        # We use smaller effective delta, due to the additional union bound in comparison to EULER
+        super(EULER_GP_RTDP, self).__init__(nState, nAction, epLen,delta*7/9, scaling)
+
+        # We need  to save the visitations from the previous iteration, so we don't take into account the state
+        # visitation in the current episode when updating the value
+        self.R_prior_new = copy.deepcopy(self.R_prior)
+        self.P_prior_new = copy.deepcopy(self.P_prior)
+        self.R_squared_sum_new = copy.deepcopy(self.R_squared_sum)
+
+
+    def update_obs(self, oldState, action, reward, newState, pContinue, h):
+        '''
+        Update the posterior belief based on one transition.
+
+        Args:
+            oldState - int
+            action - int
+            reward - double
+            newState - int
+            pContinue - 0/1
+            h - int - time within episode (not used)
+
+        Returns:
+            NULL - updates in place
+        '''
+
+        mu0, tau0 = self.R_prior_new[oldState, action]
+        tau1 = tau0 + self.tau
+        mu1 = (mu0 * tau0 + reward * self.tau) / tau1
+        self.R_prior_new[oldState, action] = (mu1, tau1)
+
+        if pContinue == 1:
+            self.P_prior_new[oldState, action][newState] += 1
+
+        self.R_squared_sum_new[oldState,action] += reward**2
+
+
+    def pick_action(self, state, timestep, nEps):
+
+        '''
+        Compute EULER Q-values via value iteration.
+        '''
+
+        # Output the MAP estimate MDP
+        R_hat, P_hat = self.map_mdp()
+
+        # Value iteration for EULER
+        R_slack, NextVal_slack = self.get_slack(nEps*self.epLen,timestep)
+
+        self.qVals[state, timestep] = np.zeros(self.nAction)
+        for a in range(self.nAction):
+            rOpt = R_hat[state, a] + R_slack[state, a]
+
+            NextValOpt = np.dot(P_hat[state, a],self.qMax[timestep + 1]) + NextVal_slack[state,a] # optimistic p^T*V
+
+            # Do Bellman backups with the optimistic R and next value
+            self.qVals[state, timestep][a] = rOpt + NextValOpt
+
+        best_action= np.argmax(self.qVals[state, timestep])
+        self.qMax[timestep][state] = min(self.qVals[state, timestep][best_action],self.qMax[timestep][state])
+
+        NextValPass = R_hat[state, best_action] - R_slack[state, best_action] + \
+                      np.dot(P_hat[state, best_action],self.qMin[timestep + 1])- NextVal_slack[state,best_action] # passimistic
+        self.qMin[timestep][state] = max(NextValPass,self.qMin[timestep][state])
+
+        # Default is to use egreedy for action selection
+        action = self.egreedy(state, timestep)
+        return action
+
+
+    def update_policy(self, time=100,nEps=100):
+        '''
+        Save the counts \ empirical estimates copies
+        '''
+
+        # Update the counts
+        self.R_prior = copy.deepcopy(self.R_prior_new)
+        self.P_prior = copy.deepcopy(self.P_prior_new)
+        self.R_squared_sum = copy.deepcopy(self.R_squared_sum_new)
 
 #-----------------------------------------------------------------------------
 # UCFH

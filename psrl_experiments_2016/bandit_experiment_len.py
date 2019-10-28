@@ -63,6 +63,11 @@ if __name__ == '__main__':
                 'BEB': finite_tabular_agents.BEB,
                 'BOLT': finite_tabular_agents.BOLT,
                 'UCRL2': finite_tabular_agents.UCRL2,
+                'UCRL2_GP': finite_tabular_agents.UCRL2_GP,
+                'UCRL2_GP_RTDP': finite_tabular_agents.UCRL2_GP_RTDP,
+                'EULER': finite_tabular_agents.EULER,
+                'EULER_GP': finite_tabular_agents.EULER_GP,
+                'EULER_GP_RTDP': finite_tabular_agents.EULER_GP_RTDP,
                 'UCFH': finite_tabular_agents.UCFH,
                 'EpsilonGreedy': finite_tabular_agents.EpsilonGreedy}
 

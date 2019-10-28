@@ -51,13 +51,16 @@ def run_finite_tabular_experiment(agent, env, f_ext, nEps, seed=1,
             # Step through the episode
             h, oldState = f_ext.get_feat(env)
 
-            action = agent.pick_action(oldState, h)
+            action = agent.pick_action(oldState, h,nEps)
             epRegret += qVals[oldState, h].max() - qVals[oldState, h][action]
 
             reward, newState, pContinue = env.advance(action)
             epReward += reward
 
             agent.update_obs(oldState, action, reward, newState, pContinue, h)
+
+            # print('ep:', ep,'h:', h, 's:', oldState, 'a:', action,'s_new:', newState, 'r:', reward, 'V:', agent.qMax[h][oldState])
+
 
         cumReward += epReward
         cumRegret += epRegret

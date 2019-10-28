@@ -18,13 +18,13 @@ class Agent(object):
     def __init__(self):
         pass
 
-    def update_obs(self, obs, action, reward, newObs):
+    def update_obs(self, obs, action, reward, newObs, pContinue, h):
         '''Add observation to records'''
 
     def update_policy(self, h):
         '''Update internal policy based upon records'''
 
-    def pick_action(self, obs):
+    def pick_action(self, obs,timestep,nEps):
         '''Select an observation based upon the observation'''
 
 

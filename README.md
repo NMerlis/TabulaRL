@@ -1,5 +1,9 @@
 # TabulaRL
 
+This code is heavily based on TabulaRL, and additionally implements EULER (Zanette and Brunskill, 2019), UCRL2-GP and EULER-GP (Efroni et. al., 2019).
+
+Documentation from TabulaRL (https://github.com/iosband/TabulaRL):
+
 Simple tabular reinforcement learning in Python.
 
 This is a very simple project for tabular reinforcement learning (TabulaRL) that I wrote during my PhD studies.
